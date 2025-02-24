@@ -17,13 +17,13 @@ export module window;
 import <iostream>; // cerr
 import <filesystem>;
 import <string>;
-import <regex>;
 import <vector>;
 import <unordered_map>;
 import <chrono>;
 import <thread>;
 
 import app;
+import cache;
 
 
 namespace hierview
@@ -111,40 +111,9 @@ void drag_to_scroll(const ImVec2& delta, ImGuiMouseButton btn)
     ImGui::SetScrollY(win, win->Scroll.y - delta.y);
 }
 
-int last_index(const std::string& str)
-{
-    static std::regex pat("(\\d+)");
-    std::smatch match;
-    if (std::regex_search(str, match, pat))
-        return std::stoi(match[match.size() - 1].str());
-    return -1;
-}
-
-FrameMap map_indices(const fs::path& dir)
-{
-    if (!fs::is_directory(dir))
-    {
-        std::cerr << dir << " is not a directory" << std::endl;
-        return {};
-    }
-
-    FrameMap entries;
-    for (const auto& entry : fs::directory_iterator(dir))
-    {
-        int i = last_index(entry.path().filename().string());
-        if (i < 0)
-            continue;
-        auto it = entries.find(i);
-        if (it == entries.end())
-            entries[i] = {entry};
-        else
-            it->second.push_back(entry);
-    }
-    return entries;
-}
-
 std::string choose_file()
 {
+    clear_cache();
     NFD::Guard guard;
     NFD::UniquePath path;
     nfdfilteritem_t filters[] = {{"Images", "png,jpg,jpeg"}};
@@ -196,7 +165,6 @@ public:
                        |  ImGuiConfigFlags_DockingEnable
                        ;
 
-
         unsigned int tex;
         glGenTextures(1, &tex);
         glBindTexture(GL_TEXTURE_2D, tex);
@@ -218,7 +186,7 @@ public:
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
             ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-            ImGui::ShowDemoWindow();
+            // ImGui::ShowDemoWindow();
 
             draw_path_win();
             draw_img_win((ImTextureID)(intptr_t)tex);
@@ -297,25 +265,31 @@ private:
             }
             else
             {
-                auto entries = map_indices(path);
+                auto& entries = get_entries(path);
                 auto it = entries.find(indices[i]);
                 if (it == entries.end())
                     return false;
+
+                bool no_entry = true;
                 for (const auto& entry : it->second)
                 {
                     if (i == indices.size() - 1)
                     {
                         if (!entry.is_regular_file())
-                            return false;
+                            continue;
                     }
                     else
                     {
                         if (!entry.is_directory())
-                            return false;
+                            continue;
                     }
                     path = entry.path();
+                    no_entry = false;
                     break;
                 }
+
+                if (no_entry)
+                    return false;
             }
         }
         return true;

@@ -12,6 +12,7 @@ find_package(Stb REQUIRED)
 add_executable(hierview src/main.cpp)
 target_sources(hierview PRIVATE FILE_SET CXX_MODULES FILES
     src/app.ixx
+    src/cache.ixx
     src/window.ixx
     )
 set_property(TARGET hierview PROPERTY CXX_STANDARD 23)
