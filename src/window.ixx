@@ -179,7 +179,7 @@ public:
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
             ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-            // ImGui::ShowDemoWindow();
+            ImGui::ShowDemoWindow();
 
             draw_path_win();
             draw_img_win((ImTextureID)(intptr_t)tex);
@@ -234,26 +234,67 @@ private:
         path_d = path_in;
     }
 
-    void draw_path_part(const fs::path& part, int i, int& i_dirty, int& step)
+    void draw_path_part(
+        const std::vector<fs::path>& parts,
+        int i,
+        int& i_dirty,
+        int& j_new,
+        fs::directory_entry& entry_new)
     {
-        std::string i_str = std::to_string(i);
-
-        ImGui::Text(part.string().c_str());
-        ImGui::SameLine();
         if (indices.at(i) < 0)
+        {
+            ImGui::Text(parts[i].string().c_str());
             return;
+        }
 
+        static int i_up = -1;
+        std::string i_str = std::to_string(i);
+        auto id_popup = ("popup" + i_str).c_str();
+
+        if (ImGui::Button(parts[i].string().c_str()))
+        {
+            ImGui::OpenPopup(id_popup);
+            i_up = i;
+        }
+
+        if (i == i_up && ImGui::BeginPopup(id_popup))
+        {
+            fs::path parent;
+            for (int j = 0; j < i; j++)
+                parent /= parts[j];
+
+            bool last_i = i == parts.size() - 1;
+            const auto& entries = get_entries(parent);
+
+            for (const auto& [j, hits] : entries)
+            {
+                for (const auto& entry : hits)
+                {
+                    if (last_i && entry.is_directory())
+                        continue;
+                    if (ImGui::Selectable(entry.path().filename().string().c_str()))
+                    {
+                        i_dirty = i;
+                        j_new = j;
+                        entry_new = entry;
+                    }
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
         if (ImGui::SmallButton(("v##v" + i_str).c_str()))
         {
-            step = -1;
             i_dirty = i;
+            j_new = indices[i] - 1;
         }
 
         ImGui::SameLine();
         if (ImGui::SmallButton(("^##^" + i_str).c_str()))
         {
-            step = 1;
             i_dirty = i;
+            j_new = indices[i] + 1;
         }
     }
 
@@ -266,35 +307,43 @@ private:
                 path /= parts[i].filename();
                 if (!fs::exists(path))
                     return false;
+                continue;
             }
-            else
-            {
-                auto& entries = get_entries(path);
-                auto it = entries.find(indices[i]);
-                if (it == entries.end())
-                    return false;
 
-                bool no_entry = true;
-                for (const auto& entry : it->second)
+            const auto& entries = get_entries(path);
+            auto it = entries.find(indices[i]);
+            if (it == entries.end())
+                return false;
+
+            const auto& hits = it->second;
+            bool last_i = i == indices.size() - 1;
+            int plan_b = -1;
+
+            for (int j = 0; j < hits.size(); j++)
+            {
+                const auto& entry = hits[j];
+                if (last_i)
                 {
-                    if (i == indices.size() - 1)
-                    {
-                        if (!entry.is_regular_file())
-                            continue;
-                    }
-                    else
-                    {
-                        if (!entry.is_directory())
-                            continue;
-                    }
-                    path = entry.path();
-                    no_entry = false;
-                    break;
+                    if (entry.is_directory())
+                        continue;
+                }
+                else if (!entry.is_directory())
+                {
+                    plan_b = j;
+                    continue;
                 }
 
-                if (no_entry)
-                    return false;
+                path = entry.path();
+                goto i_next;
             }
+
+            if (plan_b < 0)
+                return false;
+
+            indices.resize(i + 1);
+            path = hits[plan_b].path();
+i_next:
+            ;
         }
         return true;
     }
@@ -308,43 +357,53 @@ private:
             return;
         }
 
+        auto parts = split_path(path_d);
         int i_dirty = -1;
-        int step = 0;
-        int i = 0;
-        for (const fs::path& part : path_d.parent_path())
+        int j_new = -1;
+        fs::directory_entry entry_new;
+
+        for (int i = 0; i < parts.size() - 1; i++)
         {
-            if (part.has_stem())
+            if (parts[i].has_stem())
             {
-                draw_path_part(part, i, i_dirty, step);
+                draw_path_part(parts, i, i_dirty, j_new, entry_new);
                 ImGui::SameLine();
                 ImGui::Text("/");
             }
-            else if (part.has_root_name())
+            else if (parts[i].has_root_name())
             {
-                ImGui::Text(part.root_name().string().c_str());
+                ImGui::Text(parts[i].root_name().string().c_str());
                 ImGui::SameLine();
                 ImGui::Text("/");
             }
             ImGui::SameLine();
-            i++;
         }
 
-        draw_path_part(path_d.stem(), i, i_dirty, step);
+        draw_path_part(parts, parts.size() - 1, i_dirty, j_new, entry_new);
         if (i_dirty >= 0)
         {
-            indices[i_dirty] += step;
-            auto parts = split_path(path_d);
-            fs::path parent;
-            for (i = 0; i < i_dirty; i++)
-                parent /= parts[i];
-            if (adjust_path(parts, i_dirty, parent))
-                load_img(parent);
+            int j_old = indices[i_dirty];
+            indices[i_dirty] = j_new;
+            fs::path path_new = entry_new.path();
+            bool success = true;
+
+            if (path_new.empty())
+            {
+                for (int i = 0; i < i_dirty; i++)
+                    path_new /= parts[i];
+                success = adjust_path(parts, i_dirty, path_new);
+            }
+            else if (entry_new.is_directory())
+            {
+                success = adjust_path(parts, i_dirty + 1, path_new);
+            }
+
+            if (success)
+                load_img(path_new);
             else
-                indices[i_dirty] -= step;
+                indices[i_dirty] = j_old;
         }
 
-        ImGui::SameLine();
-        ImGui::Text(path_d.extension().string().c_str());
         ImGui::End();
     }
 
