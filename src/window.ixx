@@ -165,13 +165,6 @@ public:
                        |  ImGuiConfigFlags_DockingEnable
                        ;
 
-        unsigned int tex;
-        glGenTextures(1, &tex);
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-
         if (!path_in.empty())
             load_img(fs::absolute(path_in));
 
@@ -208,8 +201,8 @@ public:
 private:
     void load_img(const fs::path& path_in)
     {
-        int w, h, num_channels;
-        unsigned char* data = stbi_load(path_in.string().c_str(), &w, &h, &num_channels, 0);
+        int w, h;
+        unsigned char* data = stbi_load(path_in.string().c_str(), &w, &h, NULL, 4);
 
         if (!data)
         {
@@ -217,16 +210,27 @@ private:
             return;
         }
 
-        unsigned int mode = num_channels == 4 ? GL_RGBA : GL_RGB;
-        glTexImage2D(GL_TEXTURE_2D, 0, mode, w, h, 0, mode, GL_UNSIGNED_BYTE, data);
-        stbi_image_free(data);
+        if (tex && w == width && h == height)
+        {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        }
+        else
+        {
+            glDeleteTextures(1, &tex);
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+            width = w;
+            height = h;
+        }
 
+        stbi_image_free(data);
         indices.clear();
         for (const fs::path& part : path_in)
             indices.push_back(last_index(part.string()));
 
-        width = w;
-        height = h;
         path_d = path_in;
     }
 
@@ -334,7 +338,7 @@ private:
             for (i = 0; i < i_dirty; i++)
                 parent /= parts[i];
             if (adjust_path(parts, i_dirty, parent))
-                load_img(fs::absolute(parent));
+                load_img(parent);
             else
                 indices[i_dirty] -= step;
         }
@@ -395,6 +399,7 @@ private:
     float zoom = 1;
     int width = 0;
     int height = 0;
+    unsigned int tex = 0;
     fs::path path_d;
     std::vector<int> indices;
 };

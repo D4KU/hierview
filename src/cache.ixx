@@ -2,6 +2,7 @@ module;
 
 export module cache;
 
+import <algorithm>; // reverse
 import <iostream>;
 import <unordered_map>;
 import <filesystem>;
@@ -40,9 +41,13 @@ std::unordered_map<fs::path, FrameMap, PathHasher, PathEqual> cache;
 export int last_index(const std::string& str)
 {
     static std::regex pat("(\\d+)");
-    std::smatch match;
-    if (std::regex_search(str, match, pat))
-        return std::stoi(match[match.size() - 1].str());
+    std::match_results<std::string::const_reverse_iterator> match;
+    if (std::regex_search(str.crbegin(), str.crend(), match, pat))
+    {
+        std::string hit = match[0].str();
+        std::reverse(hit.begin(), hit.end());
+        return std::stoi(hit);
+    }
     return -1;
 }
 
@@ -71,8 +76,9 @@ void map_indices(const fs::path& dir, FrameMap& entries)
 
 export FrameMap& get_entries(const fs::path& dir)
 {
-    auto [it, _] = cache.try_emplace(dir);
-    map_indices(dir, it->second);
+    auto [it, created] = cache.try_emplace(dir);
+    if (created)
+        map_indices(dir, it->second);
     return it->second;
 }
 
