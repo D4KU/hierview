@@ -21,6 +21,7 @@ import <vector>;
 import <unordered_map>;
 import <chrono>;
 import <thread>;
+import <stack>;
 
 import app;
 import cache;
@@ -36,69 +37,6 @@ void on_size_change(GLFWwindow* window, int width, int height)
 {
     app::width = width;
     app::height = height;
-}
-
-
-std::vector<fs::path> split_path(const fs::path& path)
-{
-    std::vector<fs::path> out;
-    for (const auto& p : path)
-        out.push_back(p);
-    return out;
-}
-
-
-fs::path join_path(const std::vector<fs::path>& parts)
-{
-    fs::path out;
-    for (const auto& p : parts)
-        out /= p;
-    return out;
-}
-
-
-fs::path replace_part(const fs::path& path, const fs::path& part, int i)
-{
-    auto parts = split_path(path);
-    parts.at(i) = part;
-    fs::path out = join_path(parts);
-    out.replace_extension(path.extension());
-    return out;
-}
-
-
-std::string inc_index(const std::string& str, int step = 1, int group = -1)
-{
-    // Stores {start, length} of numbers
-    std::vector<std::pair<size_t, size_t>> groups;
-
-    // Find numeric groups
-    {
-        std::regex pat("(\\d+)");
-        auto it = std::sregex_iterator(str.begin(), str.end(), pat);
-        auto end = std::sregex_iterator();
-        for (; it != end; ++it)
-            groups.push_back({it->position(), it->length()});
-    }
-
-    // No numbers found in the string
-    if (groups.empty())
-        return str;
-
-    // Determine which number to modify
-    if (group < 0)
-        group += groups.size();
-
-    auto& [pos, len] = groups.at(group);
-    std::string num_str = str.substr(pos, len);
-    std::string num_str_new = std::to_string(std::stoi(num_str) + step);
-
-    // Convert back with zero-padding
-    if (num_str_new.length() < num_str.length())
-        num_str_new.insert(0, num_str.length() - num_str_new.length(), '0');
-
-    // Replace the original number in the string
-    return str.substr(0, pos) + num_str_new + str.substr(pos + len);
 }
 
 
@@ -166,7 +104,10 @@ public:
                        ;
 
         if (!path_in.empty())
+        {
             load_img(fs::absolute(path_in));
+            update_indices();
+        }
 
         double fps_r = 1.0 / app::fps;
         double t_last = glfwGetTime();
@@ -227,19 +168,12 @@ private:
         }
 
         stbi_image_free(data);
-        indices.clear();
+        parts.clear();
         for (const fs::path& part : path_in)
-            indices.push_back(last_index(part.string()));
-
-        path_d = path_in;
+            parts.push_back(part);
     }
 
-    void draw_path_part(
-        const std::vector<fs::path>& parts,
-        int i,
-        int& i_dirty,
-        int& j_new,
-        fs::directory_entry& entry_new)
+    void draw_path_part(int i, int& i_dirty, int& j_new, fs::directory_entry& entry_new)
     {
         if (indices.at(i) < 0)
         {
@@ -298,66 +232,69 @@ private:
         }
     }
 
-    bool adjust_path(const std::vector<fs::path>& parts, int start, fs::path& path)
+    int path_size(const fs::path& p)
     {
-        for (int i = start; i < indices.size(); i++)
+        return std::distance(p.begin(), p.end());
+    }
+
+    bool complete_path(fs::directory_entry& start)
+    {
+        std::stack<std::pair<int, fs::directory_entry>> stack;
+        int i_start = path_size(start.path());
+        stack.emplace(i_start, start);
+        bool fell_back = false;
+
+        while (!stack.empty())
         {
-            if (indices[i] < 0)
+            auto [i, entry] = stack.top();
+            stack.pop();
+
+            if (entry.is_directory())
             {
-                path /= parts[i].filename();
-                if (!fs::exists(path))
-                    return false;
+                if (i >= indices.size())
+                    continue;
+            }
+            else
+            {
+                start = entry;
+                if (i >= indices.size())
+                    return true;
+                fell_back = true;
                 continue;
             }
 
-            const auto& entries = get_entries(path);
-            auto it = entries.find(indices[i]);
-            if (it == entries.end())
-                return false;
-
-            const auto& hits = it->second;
-            bool last_i = i == indices.size() - 1;
-            int plan_b = -1;
-
-            for (int j = 0; j < hits.size(); j++)
+            if (indices[i] < 0)
             {
-                const auto& entry = hits[j];
-                if (last_i)
-                {
-                    if (entry.is_directory())
-                        continue;
-                }
-                else if (!entry.is_directory())
-                {
-                    plan_b = j;
-                    continue;
-                }
-
-                path = entry.path();
-                goto i_next;
+                fs::path child = entry.path() / parts[i];
+                if (fs::exists(child))
+                    stack.emplace(i + 1, child);
+                continue;
             }
 
-            if (plan_b < 0)
-                return false;
-
-            indices.resize(i + 1);
-            path = hits[plan_b].path();
-i_next:
-            ;
+            const auto& childs = get_entries(entry.path());
+            auto it = childs.find(indices[i]);
+            if (it == childs.end())
+                continue;
+            for (const auto& child : it->second)
+                stack.emplace(i + 1, child);
         }
+
+        if (!fell_back)
+            return false;
+
+        indices.resize(path_size(start));
         return true;
     }
 
     void draw_path_win()
     {
         ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Path") || path_d.empty())
+        if (!ImGui::Begin("Path") || parts.empty())
         {
             ImGui::End();
             return;
         }
 
-        auto parts = split_path(path_d);
         int i_dirty = -1;
         int j_new = -1;
         fs::directory_entry entry_new;
@@ -366,7 +303,7 @@ i_next:
         {
             if (parts[i].has_stem())
             {
-                draw_path_part(parts, i, i_dirty, j_new, entry_new);
+                draw_path_part(i, i_dirty, j_new, entry_new);
                 ImGui::SameLine();
                 ImGui::Text("/");
             }
@@ -379,32 +316,40 @@ i_next:
             ImGui::SameLine();
         }
 
-        draw_path_part(parts, parts.size() - 1, i_dirty, j_new, entry_new);
-        if (i_dirty >= 0)
+        draw_path_part(parts.size() - 1, i_dirty, j_new, entry_new);
+        if (i_dirty >= 0 && j_new >= 0)
         {
             int j_old = indices[i_dirty];
             indices[i_dirty] = j_new;
-            fs::path path_new = entry_new.path();
             bool success = true;
 
-            if (path_new.empty())
+            if (entry_new.path().empty())
             {
+                fs::path path_new;
                 for (int i = 0; i < i_dirty; i++)
                     path_new /= parts[i];
-                success = adjust_path(parts, i_dirty, path_new);
+                entry_new.assign(path_new);
+                success = complete_path(entry_new);
             }
             else if (entry_new.is_directory())
             {
-                success = adjust_path(parts, i_dirty + 1, path_new);
+                success = complete_path(entry_new);
             }
 
             if (success)
-                load_img(path_new);
+                load_img(entry_new.path());
             else
                 indices[i_dirty] = j_old;
         }
 
         ImGui::End();
+    }
+
+    void update_indices()
+    {
+        indices.clear();
+        for (const fs::path& part : parts)
+            indices.push_back(last_index(part.string()));
     }
 
     void draw_img_win(ImTextureID id)
@@ -438,7 +383,10 @@ i_next:
         ImGui::EndMenuBar();
 
         if (!path_in.empty())
+        {
             load_img(path_in);
+            update_indices();
+        }
 
         auto& io = ImGui::GetIO();
         if (ImGui::IsWindowHovered())
@@ -459,7 +407,7 @@ i_next:
     int width = 0;
     int height = 0;
     unsigned int tex = 0;
-    fs::path path_d;
+    std::vector<fs::path> parts;
     std::vector<int> indices;
 };
 }
