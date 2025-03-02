@@ -120,8 +120,21 @@ public:
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
             ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-            ImGui::ShowDemoWindow();
 
+            if (ImGui::BeginMainMenuBar())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O) ||
+                        ImGui::Button("Open File (Ctrl + O)"))
+                {
+                    load_img(choose_file());
+                    update_indices();
+                }
+                ImGui::PopStyleColor(1);
+                ImGui::EndMainMenuBar();
+            }
+
+            // ImGui::ShowDemoWindow();
             draw_path_win();
             draw_img_win((ImTextureID)(intptr_t)tex);
 
@@ -355,37 +368,10 @@ private:
     void draw_img_win(ImTextureID id)
     {
         ImGui::SetNextWindowSize(ImVec2(500, 440), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin(
-            "Image",
-            NULL,
-            ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_HorizontalScrollbar))
+        if (!ImGui::Begin("Image", NULL, ImGuiWindowFlags_HorizontalScrollbar))
         {
             ImGui::End();
             return;
-        }
-
-        if (!ImGui::BeginMenuBar())
-        {
-            ImGui::EndMenuBar();
-            return;
-        }
-
-        std::string path_in = "";
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O))
-            path_in = choose_file();
-
-        if (ImGui::BeginMenu("File"))
-        {
-            if (ImGui::MenuItem("Open", "Ctrl+O"))
-                path_in = choose_file();
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenuBar();
-
-        if (!path_in.empty())
-        {
-            load_img(path_in);
-            update_indices();
         }
 
         auto& io = ImGui::GetIO();
@@ -398,8 +384,21 @@ private:
         }
 
         auto& pad = ImGui::GetStyle().WindowPadding;
-        float w_new = (ImGui::GetContentRegionAvail().x - pad.x) * zoom;
-        ImGui::Image(id, ImVec2(w_new, w_new * height / width));
+        auto space = ImGui::GetContentRegionAvail();
+        float w_new, h_new;
+        if (width < height)
+        {
+            w_new = (space.x - pad.x) * zoom;
+            h_new = w_new * height / width;
+
+        }
+        else
+        {
+            h_new = (space.y - pad.y) * zoom;
+            w_new = h_new * width / height;
+        }
+
+        ImGui::Image(id, ImVec2(w_new, h_new));
         ImGui::End();
     }
 
